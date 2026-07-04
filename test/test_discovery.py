@@ -55,7 +55,7 @@ async def test_discover_servers_returns_empty_list_when_subnet_unknown(
 async def test_discover_servers_probes_network_and_finds_matches(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    network = ipaddress.ip_network("10.0.0.0/30", strict=False)
+    network = ipaddress.IPv4Network("10.0.0.0/30", strict=False)
     reachable_hosts = {"10.0.0.1"}
 
     async def fake_open_connection(host: str, port: int):
