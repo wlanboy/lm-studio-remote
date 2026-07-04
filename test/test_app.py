@@ -7,7 +7,7 @@ from lm_remote.api_client import LMStudioClient
 from lm_remote.app import LMStudioRemoteApp
 from lm_remote.discovery import LMStudioServer
 from textual.pilot import Pilot
-from textual.widgets import Button, DataTable, RichLog, Select, TabbedContent
+from textual.widgets import Button, DataTable, Input, RichLog, Select, TabbedContent
 
 
 async def _log_text(app: LMStudioRemoteApp, pilot: Pilot) -> str:
@@ -97,6 +97,136 @@ async def test_connect_success_enables_controls_and_lists_models(
         await disconnect_worker.wait()
         assert app.client is None
         assert app.query_one("#models-table", DataTable).row_count == 0
+
+
+@pytest.mark.asyncio
+async def test_header_click_sorts_models_table(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "lm_remote.app.load_servers", lambda: [LMStudioServer(host="192.168.1.10")]
+    )
+
+    async def fake_list_models(self: LMStudioClient) -> list[dict[str, Any]]:
+        return [
+            {
+                "type": "llm",
+                "publisher": "openai",
+                "key": "openai/gpt-oss-20b",
+                "display_name": "GPT OSS 20B",
+                "params_string": "20B",
+                "size_bytes": 2_000_000_000,
+                "format": "gguf",
+                "loaded_instances": [],
+            },
+            {
+                "type": "llm",
+                "publisher": "meta",
+                "key": "meta/llama-3-8b",
+                "display_name": "Llama 3 8B",
+                "params_string": "8B",
+                "size_bytes": 8_000_000_000,
+                "format": "gguf",
+                "loaded_instances": [],
+            },
+        ]
+
+    monkeypatch.setattr(LMStudioClient, "list_models", fake_list_models)
+
+    app = LMStudioRemoteApp()
+    async with app.run_test() as pilot:
+        app.query_one("#server-select", Select).value = "192.168.1.10:1234"
+        worker = app.connect()
+        await worker.wait()
+
+        table = app.query_one("#models-table", DataTable)
+        publisher_column = next(
+            key for key, column in table.columns.items() if str(column.label) == "Publisher"
+        )
+
+        def click_publisher_header() -> None:
+            column = table.columns[publisher_column]
+            app.on_data_table_header_selected(
+                DataTable.HeaderSelected(table, publisher_column, 1, column.label)
+            )
+
+        # Ascending click: "meta" sorts before "openai".
+        click_publisher_header()
+        await pilot.pause()
+        assert table.get_row_at(0)[2] == "meta/llama-3-8b"
+
+        # Clicking the same header again reverses the order.
+        click_publisher_header()
+        await pilot.pause()
+        assert table.get_row_at(0)[2] == "openai/gpt-oss-20b"
+
+        # Re-populating the table (e.g. via refresh) preserves the active sort.
+        worker = app.refresh_models()
+        await worker.wait()
+        assert table.get_row_at(0)[2] == "openai/gpt-oss-20b"
+
+
+@pytest.mark.asyncio
+async def test_search_filters_models_table(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "lm_remote.app.load_servers", lambda: [LMStudioServer(host="192.168.1.10")]
+    )
+
+    async def fake_list_models(self: LMStudioClient) -> list[dict[str, Any]]:
+        return [
+            {
+                "type": "llm",
+                "publisher": "openai",
+                "key": "openai/gpt-oss-20b",
+                "display_name": "GPT OSS 20B",
+                "params_string": "20B",
+                "size_bytes": 2_000_000_000,
+                "format": "gguf",
+                "loaded_instances": [],
+            },
+            {
+                "type": "llm",
+                "publisher": "meta",
+                "key": "meta/llama-3-8b",
+                "display_name": "Llama 3 8B",
+                "params_string": "8B",
+                "size_bytes": 8_000_000_000,
+                "format": "gguf",
+                "loaded_instances": [],
+            },
+        ]
+
+    monkeypatch.setattr(LMStudioClient, "list_models", fake_list_models)
+
+    app = LMStudioRemoteApp()
+    async with app.run_test() as pilot:
+        app.query_one("#server-select", Select).value = "192.168.1.10:1234"
+        worker = app.connect()
+        await worker.wait()
+
+        table = app.query_one("#models-table", DataTable)
+        assert table.row_count == 2
+
+        # The "s" binding focuses the search field instead of doing nothing.
+        await pilot.press("s")
+        assert app.focused is app.query_one("#search-input", Input)
+
+        await pilot.press("l", "l", "a", "m", "a")
+        await pilot.pause()
+        assert table.row_count == 1
+        assert table.get_row_at(0)[2] == "meta/llama-3-8b"
+
+        # Typing "s" while the search field is focused must type, not re-trigger the binding.
+        search = app.query_one("#search-input", Input)
+        search.value = ""
+        await pilot.press("s")
+        await pilot.pause()
+        assert search.value == "s"
+        # "s" matches "oss" in openai/gpt-oss-20b but not meta/llama-3-8b.
+        assert table.row_count == 1
+        assert table.get_row_at(0)[2] == "openai/gpt-oss-20b"
+
+        search.value = ""
+        await pilot.pause()
+        assert table.row_count == 2
 
 
 @pytest.mark.asyncio

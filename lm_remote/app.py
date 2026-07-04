@@ -3,6 +3,7 @@ their REST API (list / load / unload)."""
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from typing import Any
 
@@ -41,6 +42,37 @@ def _human_size(num_bytes: Any) -> str:
     return f"{size:.1f}PB"
 
 
+_UNIT_MULTIPLIERS = {
+    "": 1.0,
+    "B": 1.0,
+    "K": 1_000.0,
+    "KB": 1_000.0,
+    "M": 1_000_000.0,
+    "MB": 1_000_000.0,
+    "G": 1_000_000_000.0,
+    "GB": 1_000_000_000.0,
+    "T": 1_000_000_000_000.0,
+    "TB": 1_000_000_000_000.0,
+    "P": 1_000_000_000_000_000.0,
+    "PB": 1_000_000_000_000_000.0,
+}
+_NUMBER_UNIT_RE = re.compile(r"^\s*(-?[\d.]+)\s*([A-Za-z]*)\s*$")
+
+
+def _column_sort_key(cell: Any) -> tuple[int, float, str]:
+    """Sort key that treats '-' as lowest and numbers with unit suffixes
+    (e.g. '1.2GB', '7B' params) as numeric rather than lexicographic."""
+    text = cell.plain if isinstance(cell, Text) else str(cell)
+    if text in ("-", ""):
+        return (0, 0.0, "")
+    match = _NUMBER_UNIT_RE.match(text)
+    if match:
+        multiplier = _UNIT_MULTIPLIERS.get(match.group(2).upper())
+        if multiplier is not None:
+            return (1, float(match.group(1)) * multiplier, text.lower())
+    return (2, 0.0, text.lower())
+
+
 class LMStudioRemoteApp(LoadUnloadMixin, App[None]):
     TITLE = "LM Studio Remote"
     CSS = """
@@ -62,6 +94,9 @@ class LMStudioRemoteApp(LoadUnloadMixin, App[None]):
         width: 1fr;
         content-align: right middle;
     }
+    #search-input {
+        margin-bottom: 1;
+    }
     .tab-toolbar {
         height: auto;
         padding-top: 1;
@@ -78,6 +113,7 @@ class LMStudioRemoteApp(LoadUnloadMixin, App[None]):
         ("r", "refresh_models", "Refresh models"),
         ("l", "load_model", "Load"),
         ("u", "unload_model", "Unload"),
+        ("s", "focus_search", "Search"),
     ]
 
     def __init__(self) -> None:
@@ -85,6 +121,9 @@ class LMStudioRemoteApp(LoadUnloadMixin, App[None]):
         self.servers: list[LMStudioServer] = load_servers()
         self.client: LMStudioClient | None = None
         self.models_by_key: dict[str, dict[str, Any]] = {}
+        self._all_models: list[dict[str, Any]] = []
+        self._sort_column_key: Any = None
+        self._sort_reverse: bool = False
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -103,6 +142,7 @@ class LMStudioRemoteApp(LoadUnloadMixin, App[None]):
             yield Label("disconnected", id="status-label")
         with TabbedContent():
             with TabPane("Models", id="tab-models"):
+                yield Input(placeholder="Filter models... (s)", id="search-input")
                 yield DataTable(id="models-table", cursor_type="row")
                 with Horizontal(classes="tab-toolbar"):
                     yield Button("Refresh", id="refresh-models-btn", disabled=True)
@@ -206,7 +246,9 @@ class LMStudioRemoteApp(LoadUnloadMixin, App[None]):
         self.set_connected_controls(False)
         self.query_one("#status-label", Label).update("disconnected")
         self.query_one("#models-table", DataTable).clear()
+        self.query_one("#search-input", Input).value = ""
         self.models_by_key.clear()
+        self._all_models = []
         self.log_message("Disconnected")
 
     # -- models ---------------------------------------------------------------
@@ -214,20 +256,34 @@ class LMStudioRemoteApp(LoadUnloadMixin, App[None]):
     def action_refresh_models(self) -> None:
         self.refresh_models()
 
-    @work(exclusive=True, group="models")
-    async def refresh_models(self) -> None:
-        if self.client is None:
-            return
-        try:
-            models = await self.client.list_models()
-        except (httpx.HTTPError, OSError) as exc:
-            self.log_message(f"Failed to list models: {exc}", "error")
-            return
+    def action_focus_search(self) -> None:
+        self.query_one("#search-input", Input).focus()
 
-        self.models_by_key = {model["key"]: model for model in models}
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id == "search-input":
+            self._render_models_table()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        if event.input.id == "search-input":
+            self.query_one("#models-table", DataTable).focus()
+
+    @staticmethod
+    def _model_matches(model: dict[str, Any], query: str) -> bool:
+        haystack = " ".join(
+            str(model.get(field, ""))
+            for field in ("type", "publisher", "key", "display_name", "params_string", "format")
+        ).lower()
+        return query in haystack
+
+    def _render_models_table(self) -> int:
+        query = self.query_one("#search-input", Input).value.strip().lower()
         table = self.query_one("#models-table", DataTable)
         table.clear()
-        for model in models:
+        shown = 0
+        for model in self._all_models:
+            if query and not self._model_matches(model, query):
+                continue
+            shown += 1
             loaded = model.get("loaded_instances") or []
             cells = (
                 model.get("type", "-"),
@@ -242,7 +298,41 @@ class LMStudioRemoteApp(LoadUnloadMixin, App[None]):
             if loaded:
                 cells = tuple(Text(str(cell), style="bold green") for cell in cells)
             table.add_row(*cells, key=model.get("key"))
-        self.log_message(f"Loaded {len(models)} model(s)")
+        if self._sort_column_key is not None:
+            table.sort(
+                self._sort_column_key, key=_column_sort_key, reverse=self._sort_reverse
+            )
+        return shown
+
+    @work(exclusive=True, group="models")
+    async def refresh_models(self) -> None:
+        if self.client is None:
+            return
+        try:
+            models = await self.client.list_models()
+        except (httpx.HTTPError, OSError) as exc:
+            self.log_message(f"Failed to list models: {exc}", "error")
+            return
+
+        self.models_by_key = {model["key"]: model for model in models}
+        self._all_models = models
+        shown = self._render_models_table()
+        if shown != len(models):
+            self.log_message(f"Loaded {len(models)} model(s), {shown} match current filter")
+        else:
+            self.log_message(f"Loaded {len(models)} model(s)")
+
+    def on_data_table_header_selected(self, event: DataTable.HeaderSelected) -> None:
+        if self._sort_column_key == event.column_key:
+            self._sort_reverse = not self._sort_reverse
+        else:
+            self._sort_column_key = event.column_key
+            self._sort_reverse = False
+        event.data_table.sort(
+            event.column_key, key=_column_sort_key, reverse=self._sort_reverse
+        )
+        direction = "descending" if self._sort_reverse else "ascending"
+        self.log_message(f"Sorted by {event.label.plain} ({direction})")
 
     async def action_quit(self) -> None:
         if self.client is not None:
