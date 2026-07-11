@@ -9,4 +9,4 @@ wheels/
 
 # Virtual environments
 .venv
-lmstudioserver.json
+data/lmstudioserver.json

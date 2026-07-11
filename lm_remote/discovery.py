@@ -21,7 +21,8 @@ CONNECT_TIMEOUT = 0.3
 HTTP_TIMEOUT = 1.5
 CONCURRENCY = 128
 
-SERVERS_FILE = Path.cwd() / "lmstudioserver.json"
+SERVERS_FILE = Path.cwd() / "data" / "lmstudioserver.json"
+SERVERS_FILE.parent.mkdir(parents=True, exist_ok=True)
 
 
 @dataclass
@@ -120,6 +121,7 @@ def save_servers(servers: list[LMStudioServer], path: Path = SERVERS_FILE) -> No
         {k: v for k, v in asdict(server).items() if not (k == "api_token" and v is None)}
         for server in servers
     ]
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(entries, indent=2))
 
 
