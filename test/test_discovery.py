@@ -10,6 +10,7 @@ from lm_remote.discovery import (
     LMStudioServer,
     discover_servers,
     load_servers,
+    probe_health,
     save_servers,
 )
 
@@ -33,6 +34,18 @@ def test_save_and_load_servers_round_trip(tmp_path: Path) -> None:
     assert json.loads(path.read_text()) == [
         {"host": "192.168.1.10", "port": 1234},
         {"host": "192.168.1.20", "port": 5678},
+    ]
+    assert load_servers(path) == servers
+
+
+def test_save_and_load_servers_round_trip_with_api_token(tmp_path: Path) -> None:
+    path = tmp_path / "lmstudioserver.json"
+    servers = [LMStudioServer(host="192.168.1.10", api_token="secret-token")]
+
+    save_servers(servers, path)
+
+    assert json.loads(path.read_text()) == [
+        {"host": "192.168.1.10", "port": 1234, "api_token": "secret-token"}
     ]
     assert load_servers(path) == servers
 
@@ -86,3 +99,42 @@ async def test_discover_servers_probes_network_and_finds_matches(
     servers = await discover_servers(network=network, port=1234)
 
     assert servers == [LMStudioServer(host="10.0.0.1", port=1234)]
+
+
+@pytest.mark.asyncio
+async def test_probe_health_returns_true_when_server_answers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers["authorization"] == "Bearer secret-token"
+        return httpx.Response(200, json={"models": []})
+
+    original_async_client = httpx.AsyncClient
+
+    def fake_async_client(*args: Any, **kwargs: Any) -> httpx.AsyncClient:
+        kwargs["transport"] = httpx.MockTransport(handler)
+        return original_async_client(*args, **kwargs)
+
+    monkeypatch.setattr("lm_remote.discovery.httpx.AsyncClient", fake_async_client)
+
+    server = LMStudioServer(host="10.0.0.1", api_token="secret-token")
+    assert await probe_health(server) is True
+
+
+@pytest.mark.asyncio
+async def test_probe_health_returns_false_when_unreachable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("connection refused", request=request)
+
+    original_async_client = httpx.AsyncClient
+
+    def fake_async_client(*args: Any, **kwargs: Any) -> httpx.AsyncClient:
+        kwargs["transport"] = httpx.MockTransport(handler)
+        return original_async_client(*args, **kwargs)
+
+    monkeypatch.setattr("lm_remote.discovery.httpx.AsyncClient", fake_async_client)
+
+    server = LMStudioServer(host="10.0.0.1")
+    assert await probe_health(server) is False

@@ -20,14 +20,18 @@ async def _log_text(app: LMStudioRemoteApp, pilot: Pilot) -> str:
 
 @pytest.fixture(autouse=True)
 def no_network_scan(monkeypatch: pytest.MonkeyPatch) -> None:
-    # The app kicks off a network scan on mount; keep tests hermetic and fast
-    # by making it a no-op unless a test overrides it.
+    # The app kicks off a network scan and health checks on mount; keep tests
+    # hermetic and fast by making them no-ops unless a test overrides them.
     async def fake_discover_servers(*args: Any, **kwargs: Any) -> list[LMStudioServer]:
         return []
+
+    async def fake_probe_health(*args: Any, **kwargs: Any) -> bool:
+        return True
 
     monkeypatch.setattr("lm_remote.app.discover_servers", fake_discover_servers)
     monkeypatch.setattr("lm_remote.app.load_servers", lambda: [])
     monkeypatch.setattr("lm_remote.app.save_servers", lambda servers: None)
+    monkeypatch.setattr("lm_remote.app.probe_health", fake_probe_health)
 
 
 @pytest.mark.asyncio
@@ -251,6 +255,71 @@ async def test_scan_network_populates_select_and_saves(monkeypatch: pytest.Monke
         assert values == ["192.168.1.42:1234"]
         assert saved == [LMStudioServer(host="192.168.1.42")]
         assert "Found 1 LM Studio server" in await _log_text(app, pilot)
+
+
+@pytest.mark.asyncio
+async def test_health_check_updates_select_icons(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "lm_remote.app.load_servers",
+        lambda: [LMStudioServer(host="192.168.1.10"), LMStudioServer(host="192.168.1.20")],
+    )
+
+    async def fake_probe_health(server: LMStudioServer) -> bool:
+        return server.host == "192.168.1.10"
+
+    monkeypatch.setattr("lm_remote.app.probe_health", fake_probe_health)
+
+    app = LMStudioRemoteApp()
+    async with app.run_test():
+        worker = app.check_servers_health()
+        await worker.wait()
+
+        select = app.query_one("#server-select", Select)
+        labels = {
+            value: str(label) for label, value in select._options if value is not Select.NULL
+        }
+        assert labels["192.168.1.10:1234"].startswith("\U0001f7e2")
+        assert labels["192.168.1.20:1234"].startswith("\U0001f534")
+
+
+@pytest.mark.asyncio
+async def test_connect_persists_api_token_and_prefills_on_reselect(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "lm_remote.app.load_servers", lambda: [LMStudioServer(host="192.168.1.10")]
+    )
+    saved: list[list[LMStudioServer]] = []
+    monkeypatch.setattr(
+        "lm_remote.app.save_servers", lambda servers: saved.append(list(servers))
+    )
+
+    async def fake_list_models(self: LMStudioClient) -> list[dict[str, Any]]:
+        return []
+
+    monkeypatch.setattr(LMStudioClient, "list_models", fake_list_models)
+
+    app = LMStudioRemoteApp()
+    async with app.run_test() as pilot:
+        select = app.query_one("#server-select", Select)
+        select.value = "192.168.1.10:1234"
+        await pilot.pause()
+        app.query_one("#api-token", Input).value = "secret-token"
+
+        worker = app.connect()
+        await worker.wait()
+
+        assert saved[-1][0].api_token == "secret-token"
+
+        disconnect_worker = app.disconnect()
+        await disconnect_worker.wait()
+
+        # Deselecting and reselecting the server prefills the persisted token.
+        select.value = Select.NULL
+        await pilot.pause()
+        select.value = "192.168.1.10:1234"
+        await pilot.pause()
+        assert app.query_one("#api-token", Input).value == "secret-token"
 
 
 @pytest.mark.asyncio

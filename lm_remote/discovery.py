@@ -28,6 +28,7 @@ SERVERS_FILE = Path.cwd() / "lmstudioserver.json"
 class LMStudioServer:
     host: str
     port: int = DEFAULT_PORT
+    api_token: str | None = None
 
     @property
     def label(self) -> str:
@@ -102,11 +103,32 @@ def load_servers(path: Path = SERVERS_FILE) -> list[LMStudioServer]:
     except (json.JSONDecodeError, OSError):
         return []
     return [
-        LMStudioServer(host=entry["host"], port=entry.get("port", DEFAULT_PORT))
+        LMStudioServer(
+            host=entry["host"],
+            port=entry.get("port", DEFAULT_PORT),
+            api_token=entry.get("api_token"),
+        )
         for entry in entries
         if "host" in entry
     ]
 
 
 def save_servers(servers: list[LMStudioServer], path: Path = SERVERS_FILE) -> None:
-    path.write_text(json.dumps([asdict(server) for server in servers], indent=2))
+    # Omit api_token when unset so cached entries without a token keep the
+    # same on-disk shape they had before tokens existed.
+    entries = [
+        {k: v for k, v in asdict(server).items() if not (k == "api_token" and v is None)}
+        for server in servers
+    ]
+    path.write_text(json.dumps(entries, indent=2))
+
+
+async def probe_health(server: LMStudioServer, timeout: float = HTTP_TIMEOUT) -> bool:
+    """Check whether a known server currently answers its REST API."""
+    headers = {"Authorization": f"Bearer {server.api_token}"} if server.api_token else {}
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.get(f"{server.base_url}/api/v1/models", headers=headers)
+    except (httpx.HTTPError, OSError):
+        return False
+    return response.status_code == 200

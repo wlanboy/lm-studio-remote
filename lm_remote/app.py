@@ -3,6 +3,7 @@ their REST API (list / load / unload)."""
 
 from __future__ import annotations
 
+import asyncio
 import re
 from datetime import datetime
 from typing import Any
@@ -26,8 +27,19 @@ from textual.widgets import (
 )
 
 from lm_remote.api_client import LMStudioClient
-from lm_remote.discovery import LMStudioServer, discover_servers, load_servers, save_servers
+from lm_remote.discovery import (
+    LMStudioServer,
+    discover_servers,
+    load_servers,
+    probe_health,
+    save_servers,
+)
 from lm_remote.loading import LoadUnloadMixin
+
+HEALTH_CHECK_INTERVAL = 15.0
+HEALTH_ICON_ONLINE = "\U0001f7e2"
+HEALTH_ICON_OFFLINE = "\U0001f534"
+HEALTH_ICON_UNKNOWN = "?"
 
 
 def _human_size(num_bytes: Any) -> str:
@@ -124,13 +136,15 @@ class LMStudioRemoteApp(LoadUnloadMixin, App[None]):
         self._all_models: list[dict[str, Any]] = []
         self._sort_column_key: Any = None
         self._sort_reverse: bool = False
+        self._connected_server: LMStudioServer | None = None
+        self._server_health: dict[str, bool] = {}
 
     def compose(self) -> ComposeResult:
         yield Header()
         with Horizontal(id="connection-bar"):
             yield Label("LM Studio server:")
             yield Select(
-                [(s.label, s.label) for s in self.servers],
+                [(f"{HEALTH_ICON_UNKNOWN} {s.label}", s.label) for s in self.servers],
                 id="server-select",
                 prompt="choose server",
             )
@@ -159,7 +173,9 @@ class LMStudioRemoteApp(LoadUnloadMixin, App[None]):
         )
         if self.servers:
             self.log_message(f"Loaded {len(self.servers)} cached LM Studio server(s)")
+            self.check_servers_health()
         self.scan_network()
+        self.set_interval(HEALTH_CHECK_INTERVAL, self.check_servers_health)
 
     def log_message(self, message: str, level: str = "info") -> None:
         colors = {"info": "white", "warning": "yellow", "error": "bold red", "success": "green"}
@@ -196,23 +212,61 @@ class LMStudioRemoteApp(LoadUnloadMixin, App[None]):
         if handler is not None:
             handler()
 
+    def _health_icon(self, label: str) -> str:
+        status = self._server_health.get(label)
+        if status is None:
+            return HEALTH_ICON_UNKNOWN
+        return HEALTH_ICON_ONLINE if status else HEALTH_ICON_OFFLINE
+
+    def on_select_changed(self, event: Select.Changed) -> None:
+        if event.select.id != "server-select":
+            return
+        server = next((s for s in self.servers if s.label == event.value), None)
+        self.query_one("#api-token", Input).value = (server.api_token if server else None) or ""
+
     def _populate_server_select(self) -> None:
         select = self.query_one("#server-select", Select)
         current = select.value
-        options = [(server.label, server.label) for server in self.servers]
+        options = [
+            (f"{self._health_icon(server.label)} {server.label}", server.label)
+            for server in self.servers
+        ]
         select.set_options(options)
         if current is not Select.NULL and any(value == current for _, value in options):
             select.value = current
+
+    def _update_status_label(self) -> None:
+        if self.client is None or self._connected_server is None:
+            return
+        icon = self._health_icon(self._connected_server.label)
+        self.query_one("#status-label", Label).update(
+            f"connected: {self._connected_server.label} {icon}"
+        )
+
+    @work(exclusive=True, group="health")
+    async def check_servers_health(self) -> None:
+        servers = self.servers
+        if not servers:
+            self._server_health = {}
+            return
+        results = await asyncio.gather(*(probe_health(server) for server in servers))
+        self._server_health = {server.label: ok for server, ok in zip(servers, results)}
+        self._populate_server_select()
+        self._update_status_label()
 
     @work(exclusive=True, group="discovery")
     async def scan_network(self) -> None:
         self.log_message("Scanning local network for LM Studio servers...")
         found = await discover_servers()
         if found:
+            known_tokens = {server.label: server.api_token for server in self.servers}
+            for server in found:
+                server.api_token = known_tokens.get(server.label)
             self.servers = found
             save_servers(found)
             self._populate_server_select()
             self.log_message(f"Found {len(found)} LM Studio server(s)", "success")
+            self.check_servers_health()
         else:
             self.log_message("No LM Studio servers found on the local network", "warning")
 
@@ -232,8 +286,12 @@ class LMStudioRemoteApp(LoadUnloadMixin, App[None]):
         status_label.update(f"connecting to {server.label}...")
         self.log_message(f"Connecting to {server.base_url}")
 
+        server.api_token = api_token
+        save_servers(self.servers)
+
         self.client = LMStudioClient(server.base_url, api_token=api_token)
-        status_label.update(f"connected: {server.label}")
+        self._connected_server = server
+        self._update_status_label()
         self.set_connected_controls(True)
         self.log_message("Connected", "success")
         self.refresh_models()
@@ -243,6 +301,7 @@ class LMStudioRemoteApp(LoadUnloadMixin, App[None]):
         if self.client is not None:
             await self.client.aclose()
             self.client = None
+        self._connected_server = None
         self.set_connected_controls(False)
         self.query_one("#status-label", Label).update("disconnected")
         self.query_one("#models-table", DataTable).clear()
