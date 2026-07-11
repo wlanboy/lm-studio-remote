@@ -29,6 +29,15 @@ uv run pyright
 uv run ruff check .
 ```
 
+## Docker
+
+```bash
+docker build -t lm-studio-remote .
+docker run --rm -it -v ./data:/app/data lm-studio-remote
+```
+
+Der Container braucht ein Terminal (`-it`), da es sich um eine Textual-TUI handelt. `/app/data` enthält `lmstudioserver.json` und sollte als Volume gemountet werden, damit gefundene Server über Container-Neustarts hinweg erhalten bleiben. Bei einem Bind-Mount (`-v ./data:/app/data`) muss das Host-Verzeichnis vorher `chown 1000:1000` bekommen, da der Container als non-root User `1000` läuft; ein benanntes Docker-Volume (wie oben) funktioniert ohne diesen Schritt.
+
 ## Alias
 
 Um die App von überall aus starten zu können, z.B. folgenden Alias in `~/.bashrc` bzw. `~/.zshrc` eintragen:
