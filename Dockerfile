@@ -11,7 +11,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN python -m venv /opt/venv && \
     /opt/venv/bin/pip install --no-cache-dir --upgrade pip && \
-    /opt/venv/bin/pip install --no-cache-dir -r requirements.txt
+    /opt/venv/bin/pip install --no-cache-dir --only-binary=:all: -r requirements.txt
 
 # Runtime stage
 FROM python:3.14-slim
