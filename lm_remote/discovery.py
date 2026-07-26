@@ -58,7 +58,7 @@ async def _probe(host: str, port: int, client: httpx.AsyncClient) -> LMStudioSer
         _, writer = await asyncio.wait_for(
             asyncio.open_connection(host, port), timeout=CONNECT_TIMEOUT
         )
-    except (OSError, asyncio.TimeoutError):
+    except (TimeoutError, OSError):
         return None
     writer.close()
     try:

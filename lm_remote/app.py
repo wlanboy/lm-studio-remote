@@ -5,8 +5,8 @@ from __future__ import annotations
 
 import asyncio
 import re
-from datetime import datetime
-from typing import Any
+from datetime import UTC, datetime
+from typing import Any, ClassVar
 
 import httpx
 from rich.text import Text
@@ -120,7 +120,7 @@ class LMStudioRemoteApp(LoadUnloadMixin, App[None]):
         height: 1fr;
     }
     """
-    BINDINGS = [
+    BINDINGS: ClassVar = [
         ("q", "quit", "Quit"),
         ("r", "refresh_models", "Refresh models"),
         ("l", "load_model", "Load"),
@@ -179,7 +179,7 @@ class LMStudioRemoteApp(LoadUnloadMixin, App[None]):
 
     def log_message(self, message: str, level: str = "info") -> None:
         colors = {"info": "white", "warning": "yellow", "error": "bold red", "success": "green"}
-        timestamp = datetime.now().strftime("%H:%M:%S")
+        timestamp = datetime.now(tz=UTC).strftime("%H:%M:%S")
         style = colors.get(level, "white")
         self.query_one("#log", RichLog).write(f"[{style}][{timestamp}] {message}[/{style}]")
         if level in ("error", "warning"):

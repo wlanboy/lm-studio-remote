@@ -2,12 +2,12 @@ from typing import Any
 
 import httpx
 import pytest
+from textual.pilot import Pilot
+from textual.widgets import Button, DataTable, Input, RichLog, Select, TabbedContent
 
 from lm_remote.api_client import LMStudioClient
 from lm_remote.app import LMStudioRemoteApp
 from lm_remote.discovery import LMStudioServer
-from textual.pilot import Pilot
-from textual.widgets import Button, DataTable, Input, RichLog, Select, TabbedContent
 
 
 async def _log_text(app: LMStudioRemoteApp, pilot: Pilot) -> str:
@@ -29,7 +29,7 @@ def no_network_scan(monkeypatch: pytest.MonkeyPatch) -> None:
         return True
 
     monkeypatch.setattr("lm_remote.app.discover_servers", fake_discover_servers)
-    monkeypatch.setattr("lm_remote.app.load_servers", lambda: [])
+    monkeypatch.setattr("lm_remote.app.load_servers", list)
     monkeypatch.setattr("lm_remote.app.save_servers", lambda servers: None)
     monkeypatch.setattr("lm_remote.app.probe_health", fake_probe_health)
 
