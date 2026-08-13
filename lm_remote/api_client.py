@@ -54,16 +54,3 @@ class LMStudioClient:
         )
         response.raise_for_status()
         return response.json()
-
-    async def download_model(self, model: str, quantization: str | None = None) -> dict[str, Any]:
-        body: dict[str, Any] = {"model": model}
-        if quantization:
-            body["quantization"] = quantization
-        response = await self._client.post("/api/v1/models/download", json=body)
-        response.raise_for_status()
-        return response.json()
-
-    async def download_status(self, job_id: str) -> dict[str, Any]:
-        response = await self._client.get(f"/api/v1/models/download/status/{job_id}")
-        response.raise_for_status()
-        return response.json()
