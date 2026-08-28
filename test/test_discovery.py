@@ -57,11 +57,50 @@ def test_lmstudioserver_label_and_base_url() -> None:
 
 
 @pytest.mark.asyncio
-async def test_discover_servers_returns_empty_list_when_subnet_unknown(
+async def test_discover_servers_returns_empty_list_when_subnet_unknown_and_localhost_unreachable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    async def fake_open_connection(host: str, port: int):
+        raise OSError("connection refused")
+
     monkeypatch.setattr("lm_remote.discovery.local_subnet", lambda port=1234: None)
+    monkeypatch.setattr("asyncio.open_connection", fake_open_connection)
     assert await discover_servers() == []
+
+
+@pytest.mark.asyncio
+async def test_discover_servers_always_probes_localhost(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_open_connection(host: str, port: int):
+        if host != "127.0.0.1":
+            raise OSError("connection refused")
+
+        class FakeWriter:
+            def close(self) -> None:
+                return None
+
+            async def wait_closed(self) -> None:
+                return None
+
+        return None, FakeWriter()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"models": []})
+
+    original_async_client = httpx.AsyncClient
+
+    def fake_async_client(*args: Any, **kwargs: Any) -> httpx.AsyncClient:
+        kwargs["transport"] = httpx.MockTransport(handler)
+        return original_async_client(*args, **kwargs)
+
+    monkeypatch.setattr("lm_remote.discovery.local_subnet", lambda port=1234: None)
+    monkeypatch.setattr("asyncio.open_connection", fake_open_connection)
+    monkeypatch.setattr("lm_remote.discovery.httpx.AsyncClient", fake_async_client)
+
+    servers = await discover_servers(port=1234)
+
+    assert servers == [LMStudioServer(host="127.0.0.1", port=1234)]
 
 
 @pytest.mark.asyncio

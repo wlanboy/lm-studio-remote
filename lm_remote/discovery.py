@@ -80,10 +80,13 @@ async def _probe(host: str, port: int, client: httpx.AsyncClient) -> LMStudioSer
 async def discover_servers(
     network: ipaddress.IPv4Network | None = None, port: int = DEFAULT_PORT
 ) -> list[LMStudioServer]:
-    """Scan the local /24 for reachable LM Studio REST API servers."""
+    """Scan the local /24, plus localhost, for reachable LM Studio REST API servers."""
     network = network if network is not None else local_subnet(port)
-    if network is None:
-        return []
+    hosts = [str(ip) for ip in network.hosts()] if network is not None else []
+    # The subnet scan is built from the machine's LAN-facing IP and never
+    # includes loopback, so a server running on the same host is probed
+    # explicitly here.
+    hosts.append("127.0.0.1")
 
     semaphore = asyncio.Semaphore(CONCURRENCY)
 
@@ -92,9 +95,7 @@ async def discover_servers(
             return await _probe(host, port, client)
 
     async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as client:
-        results = await asyncio.gather(
-            *(bounded_probe(str(ip), client) for ip in network.hosts())
-        )
+        results = await asyncio.gather(*(bounded_probe(host, client) for host in hosts))
     return [server for server in results if server is not None]
 
 
