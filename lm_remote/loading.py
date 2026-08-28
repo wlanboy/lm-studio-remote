@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Protocol
+from typing import Any, Protocol, TypeVar
 
 import httpx
 from textual import work
@@ -12,6 +12,21 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Checkbox, DataTable, Input, Label, Select
 
 from lm_remote.api_client import LMStudioClient
+
+_ResultT = TypeVar("_ResultT")
+
+
+class _ConfirmModalScreen(ModalScreen[_ResultT]):
+    """Modal with a shared Cancel button; subclasses implement the confirm action."""
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "cancel":
+            self.dismiss(None)
+            return
+        self._on_confirm(event)
+
+    def _on_confirm(self, event: Button.Pressed) -> None:
+        raise NotImplementedError
 
 
 class _AppState(Protocol):
@@ -38,7 +53,7 @@ class _AppState(Protocol):
     def do_unload_model(self, instance_id: str) -> object: ...
 
 
-class LoadModelScreen(ModalScreen[dict[str, Any] | None]):
+class LoadModelScreen(_ConfirmModalScreen[dict[str, Any] | None]):
     """Form to load a model, prefilled with the selected model key."""
 
     DEFAULT_CSS = """
@@ -73,11 +88,7 @@ class LoadModelScreen(ModalScreen[dict[str, Any] | None]):
                 yield Button("Load", id="confirm", variant="success")
                 yield Button("Cancel", id="cancel")
 
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "cancel":
-            self.dismiss(None)
-            return
-
+    def _on_confirm(self, event: Button.Pressed) -> None:
         def _int_or_none(widget_id: str) -> int | None:
             raw = self.query_one(f"#{widget_id}", Input).value.strip()
             return int(raw) if raw else None
@@ -103,7 +114,7 @@ class LoadModelScreen(ModalScreen[dict[str, Any] | None]):
         self.dismiss(result)
 
 
-class UnloadModelScreen(ModalScreen[str | None]):
+class UnloadModelScreen(_ConfirmModalScreen[str | None]):
     """Pick which loaded instance to unload."""
 
     DEFAULT_CSS = """
@@ -131,10 +142,7 @@ class UnloadModelScreen(ModalScreen[str | None]):
                 yield Button("Unload", id="confirm", variant="error")
                 yield Button("Cancel", id="cancel")
 
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "cancel":
-            self.dismiss(None)
-            return
+    def _on_confirm(self, event: Button.Pressed) -> None:
         value = self.query_one("#instance-select", Select).value
         if value is Select.NULL:
             self.dismiss(None)

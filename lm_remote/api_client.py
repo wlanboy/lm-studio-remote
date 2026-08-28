@@ -10,10 +10,15 @@ from typing import Any
 import httpx
 
 
+def auth_headers(api_token: str | None) -> dict[str, str]:
+    return {"Authorization": f"Bearer {api_token}"} if api_token else {}
+
+
 class LMStudioClient:
     def __init__(self, base_url: str, api_token: str | None = None, timeout: float = 30.0) -> None:
-        headers = {"Authorization": f"Bearer {api_token}"} if api_token else {}
-        self._client = httpx.AsyncClient(base_url=base_url, headers=headers, timeout=timeout)
+        self._client = httpx.AsyncClient(
+            base_url=base_url, headers=auth_headers(api_token), timeout=timeout
+        )
 
     async def aclose(self) -> None:
         await self._client.aclose()

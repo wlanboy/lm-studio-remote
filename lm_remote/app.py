@@ -357,11 +357,12 @@ class LMStudioRemoteApp(LoadUnloadMixin, App[None]):
             if loaded:
                 cells = tuple(Text(str(cell), style="bold green") for cell in cells)
             table.add_row(*cells, key=model.get("key"))
-        if self._sort_column_key is not None:
-            table.sort(
-                self._sort_column_key, key=_column_sort_key, reverse=self._sort_reverse
-            )
+        self._apply_sort(table)
         return shown
+
+    def _apply_sort(self, table: DataTable) -> None:
+        if self._sort_column_key is not None:
+            table.sort(self._sort_column_key, key=_column_sort_key, reverse=self._sort_reverse)
 
     @work(exclusive=True, group="models")
     async def refresh_models(self) -> None:
@@ -387,9 +388,7 @@ class LMStudioRemoteApp(LoadUnloadMixin, App[None]):
         else:
             self._sort_column_key = event.column_key
             self._sort_reverse = False
-        event.data_table.sort(
-            event.column_key, key=_column_sort_key, reverse=self._sort_reverse
-        )
+        self._apply_sort(event.data_table)
         direction = "descending" if self._sort_reverse else "ascending"
         self.log_message(f"Sorted by {event.label.plain} ({direction})")
 

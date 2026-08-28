@@ -16,6 +16,8 @@ from pathlib import Path
 
 import httpx
 
+from lm_remote.api_client import auth_headers
+
 DEFAULT_PORT = 1234
 CONNECT_TIMEOUT = 0.3
 HTTP_TIMEOUT = 1.5
@@ -127,10 +129,11 @@ def save_servers(servers: list[LMStudioServer], path: Path = SERVERS_FILE) -> No
 
 async def probe_health(server: LMStudioServer, timeout: float = HTTP_TIMEOUT) -> bool:
     """Check whether a known server currently answers its REST API."""
-    headers = {"Authorization": f"Bearer {server.api_token}"} if server.api_token else {}
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
-            response = await client.get(f"{server.base_url}/api/v1/models", headers=headers)
+            response = await client.get(
+                f"{server.base_url}/api/v1/models", headers=auth_headers(server.api_token)
+            )
     except (httpx.HTTPError, OSError):
         return False
     return response.status_code == 200
