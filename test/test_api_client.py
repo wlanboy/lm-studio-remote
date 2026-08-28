@@ -1,7 +1,7 @@
 import httpx
 import pytest
 
-from lm_remote.api_client import LMStudioClient
+from lm_remote.api_client import LMStudioClient, LoadModelParams
 
 
 def make_client(handler, api_token: str | None = None) -> LMStudioClient:
@@ -23,7 +23,7 @@ async def test_list_models_returns_models_array() -> None:
 
     client = make_client(handler)
     models = await client.list_models()
-    assert [m["key"] for m in models] == ["a", "b"]
+    assert [m.key for m in models] == ["a", "b"]
     await client.aclose()
 
 
@@ -58,7 +58,8 @@ async def test_load_model_sends_only_provided_optional_fields() -> None:
         )
 
     client = make_client(handler)
-    result = await client.load_model("openai/gpt-oss-20b", context_length=16384, flash_attention=True)
+    params = LoadModelParams(model="openai/gpt-oss-20b", context_length=16384, flash_attention=True)
+    result = await client.load_model(params)
 
     assert seen["body"] == {
         "model": "openai/gpt-oss-20b",

@@ -26,7 +26,7 @@ from textual.widgets import (
     TabPane,
 )
 
-from lm_remote.api_client import LMStudioClient
+from lm_remote.api_client import LMStudioClient, LMStudioModel
 from lm_remote.discovery import (
     LMStudioServer,
     discover_servers,
@@ -132,8 +132,8 @@ class LMStudioRemoteApp(LoadUnloadMixin, App[None]):
         super().__init__()
         self.servers: list[LMStudioServer] = load_servers()
         self.client: LMStudioClient | None = None
-        self.models_by_key: dict[str, dict[str, Any]] = {}
-        self._all_models: list[dict[str, Any]] = []
+        self.models_by_key: dict[str, LMStudioModel] = {}
+        self._all_models: list[LMStudioModel] = []
         self._sort_column_key: Any = None
         self._sort_reverse: bool = False
         self._connected_server: LMStudioServer | None = None
@@ -327,10 +327,17 @@ class LMStudioRemoteApp(LoadUnloadMixin, App[None]):
             self.query_one("#models-table", DataTable).focus()
 
     @staticmethod
-    def _model_matches(model: dict[str, Any], query: str) -> bool:
+    def _model_matches(model: LMStudioModel, query: str) -> bool:
         haystack = " ".join(
-            str(model.get(field, ""))
-            for field in ("type", "publisher", "key", "display_name", "params_string", "format")
+            str(value)
+            for value in (
+                model.type,
+                model.publisher,
+                model.key,
+                model.display_name,
+                model.params_string,
+                model.format,
+            )
         ).lower()
         return query in haystack
 
@@ -343,20 +350,20 @@ class LMStudioRemoteApp(LoadUnloadMixin, App[None]):
             if query and not self._model_matches(model, query):
                 continue
             shown += 1
-            loaded = model.get("loaded_instances") or []
+            loaded = model.loaded_instances
             cells = (
-                model.get("type", "-"),
-                model.get("publisher", "-"),
-                model.get("key", "-"),
-                model.get("display_name", "-"),
-                model.get("params_string", "-"),
-                _human_size(model.get("size_bytes")),
-                model.get("format") or "-",
+                model.type,
+                model.publisher,
+                model.key,
+                model.display_name,
+                model.params_string,
+                _human_size(model.size_bytes),
+                model.format or "-",
                 str(len(loaded)) if loaded else "-",
             )
             if loaded:
                 cells = tuple(Text(str(cell), style="bold green") for cell in cells)
-            table.add_row(*cells, key=model.get("key"))
+            table.add_row(*cells, key=model.key)
         self._apply_sort(table)
         return shown
 
@@ -374,7 +381,7 @@ class LMStudioRemoteApp(LoadUnloadMixin, App[None]):
             self.log_message(f"Failed to list models: {exc}", "error")
             return
 
-        self.models_by_key = {model["key"]: model for model in models}
+        self.models_by_key = {model.key: model for model in models}
         self._all_models = models
         shown = self._render_models_table()
         if shown != len(models):

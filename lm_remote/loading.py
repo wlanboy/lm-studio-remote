@@ -11,7 +11,7 @@ from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Checkbox, DataTable, Input, Label, Select
 
-from lm_remote.api_client import LMStudioClient
+from lm_remote.api_client import LMStudioClient, LMStudioModel, LoadModelParams
 
 _ResultT = TypeVar("_ResultT")
 
@@ -37,7 +37,7 @@ class _AppState(Protocol):
     """
 
     client: LMStudioClient | None
-    models_by_key: dict[str, dict[str, Any]]
+    models_by_key: dict[str, LMStudioModel]
 
     def log_message(self, message: str, level: str = ...) -> None: ...
     def refresh_models(self) -> object: ...
@@ -48,12 +48,12 @@ class _AppState(Protocol):
     # methods call each other through the `self: _AppState` annotation
     def _selected_model_key(self) -> str | None: ...
     def open_load_dialog(self) -> None: ...
-    def do_load_model(self, params: dict[str, Any]) -> object: ...
+    def do_load_model(self, params: LoadModelParams) -> object: ...
     def open_unload_dialog(self) -> None: ...
     def do_unload_model(self, instance_id: str) -> object: ...
 
 
-class LoadModelScreen(_ConfirmModalScreen[dict[str, Any] | None]):
+class LoadModelScreen(_ConfirmModalScreen[LoadModelParams | None]):
     """Form to load a model, prefilled with the selected model key."""
 
     DEFAULT_CSS = """
@@ -101,17 +101,16 @@ class LoadModelScreen(_ConfirmModalScreen[dict[str, Any] | None]):
             self.app.notify("Numeric fields must be integers", severity="error")
             return
 
-        result: dict[str, Any] = {
-            "model": self.model_key,
-            "context_length": context_length,
-            "eval_batch_size": eval_batch_size,
-            "num_experts": num_experts,
-        }
-        if self.query_one("#flash-attention", Checkbox).value:
-            result["flash_attention"] = True
-        if self.query_one("#offload-kv", Checkbox).value:
-            result["offload_kv_cache_to_gpu"] = True
-        self.dismiss(result)
+        self.dismiss(
+            LoadModelParams(
+                model=self.model_key,
+                context_length=context_length,
+                eval_batch_size=eval_batch_size,
+                num_experts=num_experts,
+                flash_attention=self.query_one("#flash-attention", Checkbox).value or None,
+                offload_kv_cache_to_gpu=self.query_one("#offload-kv", Checkbox).value or None,
+            )
+        )
 
 
 class UnloadModelScreen(_ConfirmModalScreen[str | None]):
@@ -178,24 +177,23 @@ class LoadUnloadMixin:
             self.log_message("Select a model row first", "warning")
             return
 
-        def _on_result(result: dict[str, Any] | None) -> None:
+        def _on_result(result: LoadModelParams | None) -> None:
             if result is not None:
                 self.do_load_model(result)
 
         self.push_screen(LoadModelScreen(model_key), _on_result)
 
     @work(exclusive=True, group="models")
-    async def do_load_model(self: _AppState, params: dict[str, Any]) -> None:
+    async def do_load_model(self: _AppState, params: LoadModelParams) -> None:
         if self.client is None:
             return
-        model = params.pop("model")
         try:
-            response = await self.client.load_model(model, **params)
+            response = await self.client.load_model(params)
         except (httpx.HTTPError, OSError) as exc:
             self.log_message(f"Load failed: {exc}", "error")
             return
         self.log_message(
-            f"Loaded {model} as {response.get('instance_id')} in "
+            f"Loaded {params.model} as {response.get('instance_id')} in "
             f"{response.get('load_time_seconds', '?')}s",
             "success",
         )
@@ -204,7 +202,7 @@ class LoadUnloadMixin:
     def open_unload_dialog(self: _AppState) -> None:
         instances: list[tuple[str, str]] = []
         for model in self.models_by_key.values():
-            for instance in model.get("loaded_instances") or []:
+            for instance in model.loaded_instances:
                 instance_id = instance.get("id")
                 if instance_id:
                     instances.append((instance_id, instance_id))

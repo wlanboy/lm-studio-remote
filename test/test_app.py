@@ -5,7 +5,7 @@ import pytest
 from textual.pilot import Pilot
 from textual.widgets import Button, DataTable, Input, RichLog, Select, TabbedContent
 
-from lm_remote.api_client import LMStudioClient
+from lm_remote.api_client import LMStudioClient, LMStudioModel, LoadModelParams
 from lm_remote.app import LMStudioRemoteApp
 from lm_remote.discovery import LMStudioServer
 
@@ -67,18 +67,17 @@ async def test_connect_success_enables_controls_and_lists_models(
         "lm_remote.app.load_servers", lambda: [LMStudioServer(host="192.168.1.10")]
     )
 
-    async def fake_list_models(self: LMStudioClient) -> list[dict[str, Any]]:
+    async def fake_list_models(self: LMStudioClient) -> list[LMStudioModel]:
         return [
-            {
-                "type": "llm",
-                "publisher": "openai",
-                "key": "openai/gpt-oss-20b",
-                "display_name": "GPT OSS 20B",
-                "params_string": "20B",
-                "size_bytes": 2_000_000_000,
-                "format": "gguf",
-                "loaded_instances": [],
-            }
+            LMStudioModel(
+                type="llm",
+                publisher="openai",
+                key="openai/gpt-oss-20b",
+                display_name="GPT OSS 20B",
+                params_string="20B",
+                size_bytes=2_000_000_000,
+                format="gguf",
+            )
         ]
 
     monkeypatch.setattr(LMStudioClient, "list_models", fake_list_models)
@@ -109,28 +108,26 @@ async def test_header_click_sorts_models_table(monkeypatch: pytest.MonkeyPatch) 
         "lm_remote.app.load_servers", lambda: [LMStudioServer(host="192.168.1.10")]
     )
 
-    async def fake_list_models(self: LMStudioClient) -> list[dict[str, Any]]:
+    async def fake_list_models(self: LMStudioClient) -> list[LMStudioModel]:
         return [
-            {
-                "type": "llm",
-                "publisher": "openai",
-                "key": "openai/gpt-oss-20b",
-                "display_name": "GPT OSS 20B",
-                "params_string": "20B",
-                "size_bytes": 2_000_000_000,
-                "format": "gguf",
-                "loaded_instances": [],
-            },
-            {
-                "type": "llm",
-                "publisher": "meta",
-                "key": "meta/llama-3-8b",
-                "display_name": "Llama 3 8B",
-                "params_string": "8B",
-                "size_bytes": 8_000_000_000,
-                "format": "gguf",
-                "loaded_instances": [],
-            },
+            LMStudioModel(
+                type="llm",
+                publisher="openai",
+                key="openai/gpt-oss-20b",
+                display_name="GPT OSS 20B",
+                params_string="20B",
+                size_bytes=2_000_000_000,
+                format="gguf",
+            ),
+            LMStudioModel(
+                type="llm",
+                publisher="meta",
+                key="meta/llama-3-8b",
+                display_name="Llama 3 8B",
+                params_string="8B",
+                size_bytes=8_000_000_000,
+                format="gguf",
+            ),
         ]
 
     monkeypatch.setattr(LMStudioClient, "list_models", fake_list_models)
@@ -174,28 +171,26 @@ async def test_search_filters_models_table(monkeypatch: pytest.MonkeyPatch) -> N
         "lm_remote.app.load_servers", lambda: [LMStudioServer(host="192.168.1.10")]
     )
 
-    async def fake_list_models(self: LMStudioClient) -> list[dict[str, Any]]:
+    async def fake_list_models(self: LMStudioClient) -> list[LMStudioModel]:
         return [
-            {
-                "type": "llm",
-                "publisher": "openai",
-                "key": "openai/gpt-oss-20b",
-                "display_name": "GPT OSS 20B",
-                "params_string": "20B",
-                "size_bytes": 2_000_000_000,
-                "format": "gguf",
-                "loaded_instances": [],
-            },
-            {
-                "type": "llm",
-                "publisher": "meta",
-                "key": "meta/llama-3-8b",
-                "display_name": "Llama 3 8B",
-                "params_string": "8B",
-                "size_bytes": 8_000_000_000,
-                "format": "gguf",
-                "loaded_instances": [],
-            },
+            LMStudioModel(
+                type="llm",
+                publisher="openai",
+                key="openai/gpt-oss-20b",
+                display_name="GPT OSS 20B",
+                params_string="20B",
+                size_bytes=2_000_000_000,
+                format="gguf",
+            ),
+            LMStudioModel(
+                type="llm",
+                publisher="meta",
+                key="meta/llama-3-8b",
+                display_name="Llama 3 8B",
+                params_string="8B",
+                size_bytes=8_000_000_000,
+                format="gguf",
+            ),
         ]
 
     monkeypatch.setattr(LMStudioClient, "list_models", fake_list_models)
@@ -294,7 +289,7 @@ async def test_connect_persists_api_token_and_prefills_on_reselect(
         "lm_remote.app.save_servers", lambda servers: saved.append(list(servers))
     )
 
-    async def fake_list_models(self: LMStudioClient) -> list[dict[str, Any]]:
+    async def fake_list_models(self: LMStudioClient) -> list[LMStudioModel]:
         return []
 
     monkeypatch.setattr(LMStudioClient, "list_models", fake_list_models)
@@ -334,7 +329,7 @@ async def test_unload_dialog_warns_when_nothing_loaded() -> None:
 async def test_load_model_error_is_logged(monkeypatch: pytest.MonkeyPatch) -> None:
     app = LMStudioRemoteApp()
 
-    async def fake_load_model(self: LMStudioClient, model: str, **kwargs: Any) -> dict[str, Any]:
+    async def fake_load_model(self: LMStudioClient, params: LoadModelParams) -> dict[str, Any]:
         raise httpx.ConnectError("connection refused")
 
     monkeypatch.setattr(LMStudioClient, "list_models", lambda self: [])
@@ -342,6 +337,6 @@ async def test_load_model_error_is_logged(monkeypatch: pytest.MonkeyPatch) -> No
 
     async with app.run_test() as pilot:
         app.client = LMStudioClient("http://127.0.0.1:1")
-        worker = app.do_load_model({"model": "openai/gpt-oss-20b"})
+        worker = app.do_load_model(LoadModelParams(model="openai/gpt-oss-20b"))
         await worker.wait()
         assert "Load failed" in await _log_text(app, pilot)
