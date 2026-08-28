@@ -28,10 +28,11 @@ def no_network_scan(monkeypatch: pytest.MonkeyPatch) -> None:
     async def fake_probe_health(*args: Any, **kwargs: Any) -> bool:
         return True
 
-    monkeypatch.setattr("lm_remote.app.discover_servers", fake_discover_servers)
+    monkeypatch.setattr("lm_remote.discovery_ui.discover_servers", fake_discover_servers)
     monkeypatch.setattr("lm_remote.app.load_servers", list)
-    monkeypatch.setattr("lm_remote.app.save_servers", lambda servers: None)
-    monkeypatch.setattr("lm_remote.app.probe_health", fake_probe_health)
+    monkeypatch.setattr("lm_remote.discovery_ui.save_servers", lambda servers: None)
+    monkeypatch.setattr("lm_remote.connection.save_servers", lambda servers: None)
+    monkeypatch.setattr("lm_remote.discovery_ui.probe_health", fake_probe_health)
 
 
 @pytest.mark.asyncio
@@ -235,8 +236,8 @@ async def test_scan_network_populates_select_and_saves(monkeypatch: pytest.Monke
     async def fake_discover_servers(*args: Any, **kwargs: Any) -> list[LMStudioServer]:
         return [LMStudioServer(host="192.168.1.42")]
 
-    monkeypatch.setattr("lm_remote.app.discover_servers", fake_discover_servers)
-    monkeypatch.setattr("lm_remote.app.save_servers", lambda servers: saved.extend(servers))
+    monkeypatch.setattr("lm_remote.discovery_ui.discover_servers", fake_discover_servers)
+    monkeypatch.setattr("lm_remote.discovery_ui.save_servers", lambda servers: saved.extend(servers))
 
     app = LMStudioRemoteApp()
     async with app.run_test() as pilot:
@@ -262,7 +263,7 @@ async def test_health_check_updates_select_icons(monkeypatch: pytest.MonkeyPatch
     async def fake_probe_health(server: LMStudioServer) -> bool:
         return server.host == "192.168.1.10"
 
-    monkeypatch.setattr("lm_remote.app.probe_health", fake_probe_health)
+    monkeypatch.setattr("lm_remote.discovery_ui.probe_health", fake_probe_health)
 
     app = LMStudioRemoteApp()
     async with app.run_test():
@@ -286,7 +287,7 @@ async def test_connect_persists_api_token_and_prefills_on_reselect(
     )
     saved: list[list[LMStudioServer]] = []
     monkeypatch.setattr(
-        "lm_remote.app.save_servers", lambda servers: saved.append(list(servers))
+        "lm_remote.connection.save_servers", lambda servers: saved.append(list(servers))
     )
 
     async def fake_list_models(self: LMStudioClient) -> list[LMStudioModel]:
