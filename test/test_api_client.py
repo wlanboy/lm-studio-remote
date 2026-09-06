@@ -1,4 +1,4 @@
-import httpx
+import httpx2
 import pytest
 
 from lm_remote.api_client import LMStudioClient, LoadModelParams
@@ -6,20 +6,20 @@ from lm_remote.api_client import LMStudioClient, LoadModelParams
 
 def make_client(handler, api_token: str | None = None) -> LMStudioClient:
     client = LMStudioClient("http://testserver", api_token=api_token)
-    client._client = httpx.AsyncClient(
+    client._client = httpx2.AsyncClient(
         base_url="http://testserver",
         headers=client._client.headers,
-        transport=httpx.MockTransport(handler),
+        transport=httpx2.MockTransport(handler),
     )
     return client
 
 
 @pytest.mark.asyncio
 async def test_list_models_returns_models_array() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         assert request.method == "GET"
         assert request.url.path == "/api/v1/models"
-        return httpx.Response(200, json={"models": [{"key": "a"}, {"key": "b"}]})
+        return httpx2.Response(200, json={"models": [{"key": "a"}, {"key": "b"}]})
 
     client = make_client(handler)
     models = await client.list_models()
@@ -29,9 +29,9 @@ async def test_list_models_returns_models_array() -> None:
 
 @pytest.mark.asyncio
 async def test_authorization_header_is_sent_when_token_given() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         assert request.headers["authorization"] == "Bearer secret-token"
-        return httpx.Response(200, json={"models": []})
+        return httpx2.Response(200, json={"models": []})
 
     client = make_client(handler, api_token="secret-token")
     await client.list_models()
@@ -42,12 +42,12 @@ async def test_authorization_header_is_sent_when_token_given() -> None:
 async def test_load_model_sends_only_provided_optional_fields() -> None:
     seen = {}
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         import json
 
         assert request.url.path == "/api/v1/models/load"
         seen["body"] = json.loads(request.content)
-        return httpx.Response(
+        return httpx2.Response(
             200,
             json={
                 "type": "llm",
@@ -73,12 +73,12 @@ async def test_load_model_sends_only_provided_optional_fields() -> None:
 
 @pytest.mark.asyncio
 async def test_unload_model_posts_instance_id() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         assert request.url.path == "/api/v1/models/unload"
         import json
 
         assert json.loads(request.content) == {"instance_id": "openai/gpt-oss-20b"}
-        return httpx.Response(200, json={"instance_id": "openai/gpt-oss-20b"})
+        return httpx2.Response(200, json={"instance_id": "openai/gpt-oss-20b"})
 
     client = make_client(handler)
     result = await client.unload_model("openai/gpt-oss-20b")
@@ -87,10 +87,10 @@ async def test_unload_model_posts_instance_id() -> None:
 
 @pytest.mark.asyncio
 async def test_http_error_status_raises() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(500, json={"error": "boom"})
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(500, json={"error": "boom"})
 
     client = make_client(handler)
-    with pytest.raises(httpx.HTTPStatusError):
+    with pytest.raises(httpx2.HTTPStatusError):
         await client.list_models()
     await client.aclose()

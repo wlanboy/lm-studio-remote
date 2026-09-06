@@ -1,6 +1,6 @@
 from typing import Any
 
-import httpx
+import httpx2
 import pytest
 from textual.pilot import Pilot
 from textual.widgets import Button, DataTable, Input, RichLog, Select, TabbedContent
@@ -331,7 +331,7 @@ async def test_load_model_error_is_logged(monkeypatch: pytest.MonkeyPatch) -> No
     app = LMStudioRemoteApp()
 
     async def fake_load_model(self: LMStudioClient, params: LoadModelParams) -> dict[str, Any]:
-        raise httpx.ConnectError("connection refused")
+        raise httpx2.ConnectError("connection refused")
 
     monkeypatch.setattr(LMStudioClient, "list_models", lambda self: [])
     monkeypatch.setattr(LMStudioClient, "load_model", fake_load_model)
