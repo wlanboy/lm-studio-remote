@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-LMSTUDIO_VERSION="0.4.20-1"
+LMSTUDIO_VERSION="0.4.23-1"
 
 # Prüft ob eine Datei/AppImage existiert und nicht leer ist
 need_file() {
