@@ -2,21 +2,18 @@
 
 from __future__ import annotations
 
-from typing import Any, Protocol
+from typing import Protocol
 
 from textual import work
 from textual.widgets import Button, DataTable, Input, Label, Select
 
 from lm_remote.api_client import LMStudioClient, LMStudioModel
-from lm_remote.discovery import LMStudioServer, save_servers
+from lm_remote.discovery import LMStudioServer, find_by_label, save_servers
+from lm_remote.protocols import AppStateBase
 
 
-class _AppState(Protocol):
-    """Attributes/methods `ConnectionMixin` needs from `LMStudioRemoteApp`.
-
-    Used only as a `self` annotation below, never as a real base class, so
-    it doesn't affect the runtime MRO of `LMStudioRemoteApp`.
-    """
+class _ConnectionAppState(AppStateBase, Protocol):
+    """Attributes/methods `ConnectionMixin` needs from `LMStudioRemoteApp`."""
 
     servers: list[LMStudioServer]
     client: LMStudioClient | None
@@ -24,8 +21,6 @@ class _AppState(Protocol):
     _all_models: list[LMStudioModel]
     _connected_server: LMStudioServer | None
 
-    def log_message(self, message: str, level: str = ...) -> None: ...
-    def query_one(self, *args: Any, **kwargs: Any) -> Any: ...
     def refresh_models(self) -> object: ...
     def _update_status_label(self) -> None: ...
 
@@ -36,13 +31,13 @@ class _AppState(Protocol):
 class ConnectionMixin:
     """Connect/disconnect lifecycle, mixed into `LMStudioRemoteApp`."""
 
-    def on_select_changed(self: _AppState, event: Select.Changed) -> None:
+    def on_select_changed(self: _ConnectionAppState, event: Select.Changed) -> None:
         if event.select.id != "server-select":
             return
-        server = next((s for s in self.servers if s.label == event.value), None)
+        server = find_by_label(self.servers, event.value)
         self.query_one("#api-token", Input).value = (server.api_token if server else None) or ""
 
-    def set_connected_controls(self: _AppState, connected: bool) -> None:
+    def set_connected_controls(self: _ConnectionAppState, connected: bool) -> None:
         self.query_one("#connect-btn", Button).disabled = connected
         self.query_one("#disconnect-btn", Button).disabled = not connected
         self.query_one("#server-select", Select).disabled = connected
@@ -55,12 +50,12 @@ class ConnectionMixin:
             self.query_one(f"#{widget_id}", Button).disabled = not connected
 
     @work(exclusive=True)
-    async def connect(self: _AppState) -> None:
+    async def connect(self: _ConnectionAppState) -> None:
         label = self.query_one("#server-select", Select).value
         if label is Select.NULL or not label:
             self.log_message("Choose a server first", "warning")
             return
-        server = next((s for s in self.servers if s.label == label), None)
+        server = find_by_label(self.servers, label)
         if server is None:
             self.log_message("Selected server is no longer known, rescan the network", "error")
             return
@@ -81,7 +76,7 @@ class ConnectionMixin:
         self.refresh_models()
 
     @work(exclusive=True)
-    async def disconnect(self: _AppState) -> None:
+    async def disconnect(self: _ConnectionAppState) -> None:
         if self.client is not None:
             await self.client.aclose()
             self.client = None

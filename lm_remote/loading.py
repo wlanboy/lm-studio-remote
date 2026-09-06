@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import Any, Protocol, TypeVar
 
-import httpx
 from textual import work
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
@@ -12,6 +11,8 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Checkbox, DataTable, Input, Label, Select
 
 from lm_remote.api_client import LMStudioClient, LMStudioModel, LoadModelParams
+from lm_remote.errors import call_or_log
+from lm_remote.protocols import AppStateBase
 
 _ResultT = TypeVar("_ResultT")
 
@@ -29,23 +30,17 @@ class _ConfirmModalScreen(ModalScreen[_ResultT]):
         raise NotImplementedError
 
 
-class _AppState(Protocol):
-    """Attributes/methods `LoadUnloadMixin` needs from `LMStudioRemoteApp`.
-
-    Used only as a `self` annotation below, never as a real base class, so
-    it doesn't affect the runtime MRO of `LMStudioRemoteApp`.
-    """
+class _LoadUnloadAppState(AppStateBase, Protocol):
+    """Attributes/methods `LoadUnloadMixin` needs from `LMStudioRemoteApp`."""
 
     client: LMStudioClient | None
     models_by_key: dict[str, LMStudioModel]
 
-    def log_message(self, message: str, level: str = ...) -> None: ...
     def refresh_models(self) -> object: ...
-    def query_one(self, *args: Any, **kwargs: Any) -> Any: ...
     def push_screen(self, *args: Any, **kwargs: Any) -> Any: ...
 
     # sibling members of `LoadUnloadMixin` itself, needed because its
-    # methods call each other through the `self: _AppState` annotation
+    # methods call each other through the `self: _LoadUnloadAppState` annotation
     def _selected_model_key(self) -> str | None: ...
     def open_load_dialog(self) -> None: ...
     def do_load_model(self, params: LoadModelParams) -> object: ...
@@ -152,26 +147,26 @@ class UnloadModelScreen(_ConfirmModalScreen[str | None]):
 class LoadUnloadMixin:
     """Load/unload dialogs and workers, mixed into `LMStudioRemoteApp`."""
 
-    def action_load_model(self: _AppState) -> None:
+    def action_load_model(self: _LoadUnloadAppState) -> None:
         if self.client is None:
             self.log_message("Connect to a server first", "warning")
             return
         self.open_load_dialog()
 
-    def action_unload_model(self: _AppState) -> None:
+    def action_unload_model(self: _LoadUnloadAppState) -> None:
         if self.client is None:
             self.log_message("Connect to a server first", "warning")
             return
         self.open_unload_dialog()
 
-    def _selected_model_key(self: _AppState) -> str | None:
+    def _selected_model_key(self: _LoadUnloadAppState) -> str | None:
         table = self.query_one("#models-table", DataTable)
         if table.row_count == 0 or table.cursor_row is None:
             return None
         row_key = table.coordinate_to_cell_key(table.cursor_coordinate).row_key
         return row_key.value if row_key is not None else None
 
-    def open_load_dialog(self: _AppState) -> None:
+    def open_load_dialog(self: _LoadUnloadAppState) -> None:
         model_key = self._selected_model_key()
         if model_key is None:
             self.log_message("Select a model row first", "warning")
@@ -184,13 +179,11 @@ class LoadUnloadMixin:
         self.push_screen(LoadModelScreen(model_key), _on_result)
 
     @work(exclusive=True, group="models")
-    async def do_load_model(self: _AppState, params: LoadModelParams) -> None:
+    async def do_load_model(self: _LoadUnloadAppState, params: LoadModelParams) -> None:
         if self.client is None:
             return
-        try:
-            response = await self.client.load_model(params)
-        except (httpx.HTTPError, OSError) as exc:
-            self.log_message(f"Load failed: {exc}", "error")
+        response = await call_or_log(self, self.client.load_model(params), "Load failed")
+        if response is None:
             return
         self.log_message(
             f"Loaded {params.model} as {response.get('instance_id')} in "
@@ -199,7 +192,7 @@ class LoadUnloadMixin:
         )
         self.refresh_models()
 
-    def open_unload_dialog(self: _AppState) -> None:
+    def open_unload_dialog(self: _LoadUnloadAppState) -> None:
         instances: list[tuple[str, str]] = []
         for model in self.models_by_key.values():
             for instance in model.loaded_instances:
@@ -217,13 +210,11 @@ class LoadUnloadMixin:
         self.push_screen(UnloadModelScreen(instances), _on_result)
 
     @work(exclusive=True, group="models")
-    async def do_unload_model(self: _AppState, instance_id: str) -> None:
+    async def do_unload_model(self: _LoadUnloadAppState, instance_id: str) -> None:
         if self.client is None:
             return
-        try:
-            await self.client.unload_model(instance_id)
-        except (httpx.HTTPError, OSError) as exc:
-            self.log_message(f"Unload failed: {exc}", "error")
+        result = await call_or_log(self, self.client.unload_model(instance_id), "Unload failed")
+        if result is None:
             return
         self.log_message(f"Unloaded {instance_id}", "success")
         self.refresh_models()

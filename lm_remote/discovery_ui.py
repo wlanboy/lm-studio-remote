@@ -4,7 +4,7 @@ mixin that keeps the server-select dropdown and status label in sync."""
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Protocol
+from typing import Protocol
 
 from textual import work
 from textual.widgets import Label, Select
@@ -16,6 +16,7 @@ from lm_remote.discovery import (
     probe_health,
     save_servers,
 )
+from lm_remote.protocols import AppStateBase
 
 HEALTH_CHECK_INTERVAL = 15.0
 HEALTH_ICON_ONLINE = "\U0001f7e2"
@@ -23,20 +24,13 @@ HEALTH_ICON_OFFLINE = "\U0001f534"
 HEALTH_ICON_UNKNOWN = "?"
 
 
-class _AppState(Protocol):
-    """Attributes/methods `ServerDiscoveryMixin` needs from `LMStudioRemoteApp`.
-
-    Used only as a `self` annotation below, never as a real base class, so
-    it doesn't affect the runtime MRO of `LMStudioRemoteApp`.
-    """
+class _DiscoveryAppState(AppStateBase, Protocol):
+    """Attributes/methods `ServerDiscoveryMixin` needs from `LMStudioRemoteApp`."""
 
     servers: list[LMStudioServer]
     client: LMStudioClient | None
     _connected_server: LMStudioServer | None
     _server_health: dict[str, bool]
-
-    def log_message(self, message: str, level: str = ...) -> None: ...
-    def query_one(self, *args: Any, **kwargs: Any) -> Any: ...
 
     # sibling members of `ServerDiscoveryMixin` itself
     def _health_icon(self, label: str) -> str: ...
@@ -48,13 +42,13 @@ class _AppState(Protocol):
 class ServerDiscoveryMixin:
     """Network discovery and health polling, mixed into `LMStudioRemoteApp`."""
 
-    def _health_icon(self: _AppState, label: str) -> str:
+    def _health_icon(self: _DiscoveryAppState, label: str) -> str:
         status = self._server_health.get(label)
         if status is None:
             return HEALTH_ICON_UNKNOWN
         return HEALTH_ICON_ONLINE if status else HEALTH_ICON_OFFLINE
 
-    def _populate_server_select(self: _AppState) -> None:
+    def _populate_server_select(self: _DiscoveryAppState) -> None:
         select = self.query_one("#server-select", Select)
         current = select.value
         options = [
@@ -65,7 +59,7 @@ class ServerDiscoveryMixin:
         if current is not Select.NULL and any(value == current for _, value in options):
             select.value = current
 
-    def _update_status_label(self: _AppState) -> None:
+    def _update_status_label(self: _DiscoveryAppState) -> None:
         if self.client is None or self._connected_server is None:
             return
         icon = self._health_icon(self._connected_server.label)
@@ -74,7 +68,7 @@ class ServerDiscoveryMixin:
         )
 
     @work(exclusive=True, group="health")
-    async def check_servers_health(self: _AppState) -> None:
+    async def check_servers_health(self: _DiscoveryAppState) -> None:
         servers = self.servers
         if not servers:
             self._server_health = {}
@@ -85,7 +79,7 @@ class ServerDiscoveryMixin:
         self._update_status_label()
 
     @work(exclusive=True, group="discovery")
-    async def scan_network(self: _AppState) -> None:
+    async def scan_network(self: _DiscoveryAppState) -> None:
         self.log_message("Scanning local network for LM Studio servers...")
         found = await discover_servers()
         if found:
