@@ -14,7 +14,7 @@ import socket
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-import httpx
+import httpx2
 
 from lm_remote.api_client import auth_headers
 
@@ -24,7 +24,6 @@ HTTP_TIMEOUT = 1.5
 CONCURRENCY = 128
 
 SERVERS_FILE = Path.cwd() / "data" / "lmstudioserver.json"
-SERVERS_FILE.parent.mkdir(parents=True, exist_ok=True)
 
 
 @dataclass
@@ -42,6 +41,14 @@ class LMStudioServer:
         return f"http://{self.host}:{self.port}"
 
 
+def find_by_label(servers: list[LMStudioServer], label: object) -> LMStudioServer | None:
+    """Look up a known server by its `label` (the identifier the UI's
+    server-select dropdown and health map key on). `label` accepts `object`
+    because callers may pass a `Select` widget's value, which can be its
+    `NoSelection` sentinel rather than an actual label string."""
+    return next((server for server in servers if server.label == label), None)
+
+
 def local_subnet(port: int = DEFAULT_PORT) -> ipaddress.IPv4Network | None:
     """Best-effort guess at the /24 network this machine's default route sits on."""
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
@@ -55,7 +62,7 @@ def local_subnet(port: int = DEFAULT_PORT) -> ipaddress.IPv4Network | None:
     return ipaddress.IPv4Network(f"{local_ip}/24", strict=False)
 
 
-async def _probe(host: str, port: int, client: httpx.AsyncClient) -> LMStudioServer | None:
+async def _probe(host: str, port: int, client: httpx2.AsyncClient) -> LMStudioServer | None:
     try:
         _, writer = await asyncio.wait_for(
             asyncio.open_connection(host, port), timeout=CONNECT_TIMEOUT
@@ -70,7 +77,7 @@ async def _probe(host: str, port: int, client: httpx.AsyncClient) -> LMStudioSer
 
     try:
         response = await client.get(f"http://{host}:{port}/api/v1/models")
-    except (httpx.HTTPError, OSError):
+    except (httpx2.HTTPError, OSError):
         return None
     if response.status_code != 200 or "models" not in response.json():
         return None
@@ -90,11 +97,11 @@ async def discover_servers(
 
     semaphore = asyncio.Semaphore(CONCURRENCY)
 
-    async def bounded_probe(host: str, client: httpx.AsyncClient) -> LMStudioServer | None:
+    async def bounded_probe(host: str, client: httpx2.AsyncClient) -> LMStudioServer | None:
         async with semaphore:
             return await _probe(host, port, client)
 
-    async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as client:
+    async with httpx2.AsyncClient(timeout=HTTP_TIMEOUT) as client:
         results = await asyncio.gather(*(bounded_probe(host, client) for host in hosts))
     return [server for server in results if server is not None]
 
@@ -131,10 +138,10 @@ def save_servers(servers: list[LMStudioServer], path: Path = SERVERS_FILE) -> No
 async def probe_health(server: LMStudioServer, timeout: float = HTTP_TIMEOUT) -> bool:
     """Check whether a known server currently answers its REST API."""
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        async with httpx2.AsyncClient(timeout=timeout) as client:
             response = await client.get(
                 f"{server.base_url}/api/v1/models", headers=auth_headers(server.api_token)
             )
-    except (httpx.HTTPError, OSError):
+    except (httpx2.HTTPError, OSError):
         return False
     return response.status_code == 200

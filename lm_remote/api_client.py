@@ -8,7 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-import httpx
+import httpx2
 
 
 def auth_headers(api_token: str | None) -> dict[str, str]:
@@ -68,7 +68,7 @@ class LoadModelParams:
 
 class LMStudioClient:
     def __init__(self, base_url: str, api_token: str | None = None, timeout: float = 30.0) -> None:
-        self._client = httpx.AsyncClient(
+        self._client = httpx2.AsyncClient(
             base_url=base_url, headers=auth_headers(api_token), timeout=timeout
         )
 
